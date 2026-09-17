@@ -2,47 +2,57 @@
 
 这是 Linux-macctl 的 GitHub **补充控制通道**，不是 SentinelX 的替代品。
 
-当前用于普通 ChatGPT Plus 聊天窗口中的持久、异步、可排队维护任务：
+当前链路：
 
 `ChatGPT → GitHub Issue → GitHub Actions → Hermes self-hosted runner → 固定 root dispatcher → macctl / service control → Issue 安全摘要 + Artifact`
 
 ## 当前定位
 
 - SentinelX：实时主控制通道。
-- GitHub：后台任务、长任务、排队、留档、自主维护、SentinelX 应用层备用通道。
+- GitHub：后台任务、长任务、排队、诊断、批量巡检、留档、自主维护、SentinelX 应用层备用通道。
 - Remote Desktop Commander：维修 / break-glass。
 
-## R2.1 自主能力
+## R3 稳定能力
 
-普通聊天中可直接调用固定 typed operations，无需每次人工审批。主要包括：
+普通 ChatGPT Plus 聊天中可以一次调用创建带 `macctl:request` 标签的 Issue，任务自动执行、回写、留 Artifact；成功后自动关闭。
+
+主要能力：
 
 - 基础检查：`version`、`status`、`health`、`doctor`
-- Fleet / Linux：`fleet.status`、`fleet.doctor`、`linux.fleet-status`、`linux.fleet-doctor`
+- Fleet / Linux：`fleet.status`、`fleet.doctor`、`linux.fleet-status`、`linux.fleet-doctor`、`fleet.audit`
 - 备份：`backup.status`、`backup.destinations`、`backup.snapshots`、`backup.apfs-snapshots`、`backup.create-local`
 - 审计：`audit.status`、`audit.stats`、`audit.verify`
 - 控制面：`sentinelx.health`、`sentinelx.recover`、`sentinelx.restart`、`github-runner.health`
-- 长任务：`full.audit`、`ci.committed`、`maintenance.validate`
+- 长任务：`full.audit`、`ci.committed`、`maintenance.validate`、`diagnostics.bundle`
+- 自动自愈：`selfheal.check`、`selfheal.run`、`selfheal.status`
 - Hermes VM 受控重启：`hermes.reboot.preflight`、`hermes.reboot`、`hermes.reboot.status`
 - 自描述：`control.capabilities`
 
-`hermes.reboot` 只指向 **Hermes VM**。它使用长期授权，不再要求逐次人工审批；执行前会检查 systemd 状态、GitHub runner、根分区可用空间和重复 reboot 事务，SentinelX 状态作为观察项。通过后写入本地 reboot transaction，使用 systemd 延迟调度重启，启动后由 `macctl-hermes-reboot-reconcile.service` 记录是否进入新的 boot。
+运行时以 `control.capabilities` 返回的清单为准，避免依赖静态文档猜测能力。
 
-该长期授权 **不适用于** NAS 宿主机、Mac mini 或其他 Linux 主机。
+## 已完成的 R3 资格验证
 
-## 任务状态
-
-`macctl:request → macctl:running → macctl:passed / macctl:failed`
-
-同一个 `request_id` 重复触发时不会重新执行；同 ID 不同 payload 直接拒绝。成功任务自动关闭 Issue，并生成 7 天安全摘要 Artifact。
+- **实际 reboot 全闭环**：GitHub 安排 Hermes VM 重启 → VM 真正断线 → 新 boot 上线 → SentinelX 恢复 → GitHub runner 恢复 → `hermes.reboot.status` 返回 `boot_changed=true`。
+- **reboot 生命周期修复**：发现 `/run/macctl` 在 VM reboot 后丢失会导致 SSH ControlPath 全面失败；已通过 `/etc/tmpfiles.d/macctl-runtime.conf` 固化 `/run/macctl` 与 credential runtime 目录的启动重建。
+- **批量巡检**：最终资格验证为 1 台 Mac + 2 台远端 Linux 全部 PASS。
+- **诊断包**：最终 15 项检查全部 PASS；Hermes 本地保存完整原始诊断，公开 GitHub 只生成安全摘要。
+- **安全 Artifact**：每个 R3 任务可留下 `report.json`、`summary.md`、`checks.csv`，默认保存 7 天。
+- **自动自愈**：`macctl-control-healer.timer` 已启用，每 5 分钟检查 SentinelX 与 GitHub runner；真实注入 runner `inactive` 后成功自动恢复逻辑已验证。
 
 ## 自主权限模型
 
 - GitHub runner 本身仍是普通用户。
 - 唯一固定 `/usr/local/libexec/macctl-github-dispatch` 通过 sudo 以 root 执行，并由 root 拥有、runner 不可修改。
-- ChatGPT/GitHub 连接当前可直接维护这个公开控制仓库，仓库未启用 Rulesets。
-- R2.1 白名单内操作可直接执行。
-- **Hermes VM controlled reboot 已有 standing authorization，无需再次询问。**
+- 仓库当前未启用 Rulesets，ChatGPT/GitHub 连接可直接维护控制仓库。
+- R3 白名单内低/中风险 typed operations 可直接执行。
+- **Hermes VM controlled reboot 已有 standing authorization，无需逐次询问。**
 - NAS 宿主机 reboot、Mac reboot、其他主机 reboot、shutdown、真实网络切换、安全策略变更、不可逆删除、Immutable Release 发布仍要求新的明确授权。
+
+## 结果与数据边界
+
+- 完整原始执行结果只保存在 Hermes 本地 root-only ledger / diagnostics 目录。
+- 公开 Issue 和 Artifact 仅包含脱敏结构化摘要，不上传 IP、用户名、凭据或内部路径。
+- 请求使用 `request_id + SHA-256` 做本地幂等；同 ID 同 payload 直接重放历史结果，同 ID 不同 payload 拒绝。
 
 ## 请求格式
 
@@ -50,9 +60,13 @@
 {
   "schema_version": 1,
   "request_id": "req-example-0001",
-  "operation": "maintenance.validate",
+  "operation": "diagnostics.bundle",
   "args": {}
 }
 ```
 
-在普通聊天中创建 Issue 时直接带 `macctl:request` 标签即可一次调用触发；成功后 GitHub 自动回写、留 Artifact 并关闭 Issue。
+## 生命周期状态
+
+R3 已完成计划中的：**实际 reboot 闭环 → 诊断包 → 批量巡检 → 自动自愈**。
+
+控制通道从这里进入长期稳定使用 / 按需维护阶段；后续不再为了扩功能而持续研发，只有出现新的真实需求、平台变化或故障证据时再做增量升级。
