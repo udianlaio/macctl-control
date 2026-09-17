@@ -30,8 +30,7 @@ jobs:
           import sys
           import urllib.request
 
-          event_path = os.environ['GITHUB_EVENT_PATH']
-          with open(event_path, 'r', encoding='utf-8') as f:
+          with open(os.environ['GITHUB_EVENT_PATH'], 'r', encoding='utf-8') as f:
               event = json.load(f)
           body = event.get('issue', {}).get('body') or ''
 
@@ -51,13 +50,11 @@ jobs:
                       'ok': False,
                       'error': 'dispatcher_non_json_output',
                       'returncode': cp.returncode,
-                      'stdout': raw[:12000],
-                      'stderr': (cp.stderr or '')[:12000],
                   }
           except Exception as exc:
-              cp = None
-              result = {'ok': False, 'error': 'workflow_dispatch_exception', 'detail': str(exc)}
+              result = {'ok': False, 'error': 'workflow_dispatch_exception'}
 
+          # Public repository: only publish a non-sensitive summary.
           summary = {
               'ok': result.get('ok', False),
               'request_id': result.get('request_id'),
@@ -67,13 +64,10 @@ jobs:
               'idempotent_replay': result.get('idempotent_replay'),
               'error': result.get('error'),
           }
-          pretty = json.dumps(result, ensure_ascii=False, indent=2)
-          if len(pretty) > 52000:
-              pretty = pretty[:52000] + '\n...[comment truncated]'
           comment = (
               '## Linux-macctl GitHub R0 执行结果\n\n'
-              + '```json\n' + json.dumps(summary, ensure_ascii=False, indent=2) + '\n```\n\n'
-              + '<details><summary>完整结果</summary>\n\n```json\n' + pretty + '\n```\n</details>'
+              '公开仓库仅回传非敏感摘要；完整执行记录保留在 Hermes 本地账本。\n\n'
+              '```json\n' + json.dumps(summary, ensure_ascii=False, indent=2) + '\n```'
           )
 
           repo = os.environ['GH_REPOSITORY']
