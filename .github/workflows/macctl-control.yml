@@ -1,4 +1,4 @@
-name: macctl-control-r2
+name: macctl-control-r2.1
 
 on:
   issues:
@@ -18,7 +18,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, hermes-macctl-control]
     timeout-minutes: 20
     steps:
-      - name: Dispatch typed R2 request
+      - name: Dispatch typed R2.1 request
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
@@ -103,6 +103,13 @@ jobs:
               'head': result.get('head'),
               'changed': result.get('changed'),
               'state': result.get('state'),
+              'target': result.get('target'),
+              'delay_seconds': result.get('delay_seconds'),
+              'boot_changed': result.get('boot_changed'),
+              'sentinelx_active': result.get('sentinelx_active'),
+              'github_runner_active': result.get('github_runner_active'),
+              'scheduled_at_epoch': result.get('scheduled_at_epoch'),
+              'completed_at_epoch': result.get('completed_at_epoch'),
               'run_id': os.environ['GH_RUN_ID'],
               'run_attempt': os.environ['GH_RUN_ATTEMPT'],
           }
@@ -114,20 +121,20 @@ jobs:
           ]
           capabilities = result.get('capabilities') or []
           safe_report = {
-              'schema': 'macctl-github-r2-safe-report/v1',
+              'schema': 'macctl-github-r2.1-safe-report/v1',
               'repository': repo,
               'issue_number': int(issue),
               'summary': summary,
               'checks': safe_checks,
               'capabilities': capabilities,
           }
-          report_path = os.path.join(os.environ['RUNNER_TEMP'], 'macctl-r2-report.json')
+          report_path = os.path.join(os.environ['RUNNER_TEMP'], 'macctl-r2-1-report.json')
           with open(report_path, 'w', encoding='utf-8') as f:
               json.dump(safe_report, f, ensure_ascii=False, indent=2, sort_keys=True)
               f.write('\n')
 
           lines = [
-              '## Linux-macctl GitHub R2 执行结果', '',
+              '## Linux-macctl GitHub R2.1 执行结果', '',
               '公开仓库仅回传非敏感摘要；完整执行记录保留在 Hermes 本地账本。', '',
               '```json', json.dumps(summary, ensure_ascii=False, indent=2), '```',
           ]
@@ -153,7 +160,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: macctl-r2-issue-${{ github.event.issue.number }}-run-${{ github.run_id }}
-          path: ${{ runner.temp }}/macctl-r2-report.json
+          name: macctl-r2-1-issue-${{ github.event.issue.number }}-run-${{ github.run_id }}
+          path: ${{ runner.temp }}/macctl-r2-1-report.json
           if-no-files-found: ignore
           retention-days: 7
