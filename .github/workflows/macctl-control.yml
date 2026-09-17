@@ -143,6 +143,7 @@ jobs:
           remove_label('macctl:running')
           if result.get('ok', False):
               add_labels('macctl:passed')
+              api('PATCH', f'/issues/{issue}', {'state': 'closed', 'state_reason': 'completed'})
           else:
               add_labels('macctl:failed')
               sys.exit(1)
