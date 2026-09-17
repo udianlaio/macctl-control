@@ -1,1 +1,0 @@
-R2 implementation is active. Runtime capability discovery is provided by the `control.capabilities` operation. Full qualification is tracked through GitHub Issues and Actions.
