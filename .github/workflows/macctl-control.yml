@@ -1,4 +1,4 @@
-name: macctl-control-r1
+name: macctl-control-r2
 
 on:
   issues:
@@ -16,9 +16,9 @@ jobs:
       github.actor_id == '73857148' &&
       github.event.issue.user.id == 73857148
     runs-on: [self-hosted, linux, x64, hermes-macctl-control]
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Dispatch typed R1 request
+      - name: Dispatch typed R2 request
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
@@ -65,8 +65,9 @@ jobs:
               quoted = urllib.parse.quote(label, safe='')
               api('DELETE', f'/issues/{issue}/labels/{quoted}', ignore_404=True)
 
-          add_labels('macctl:r1', 'macctl:running')
+          add_labels('macctl:r2', 'macctl:running')
           remove_label('macctl:request')
+          remove_label('macctl:r1')
           remove_label('macctl:passed')
           remove_label('macctl:failed')
 
@@ -80,17 +81,13 @@ jobs:
                   input=body,
                   text=True,
                   capture_output=True,
-                  timeout=840,
+                  timeout=1140,
               )
               raw = (cp.stdout or '').strip()
               try:
                   result = json.loads(raw)
               except Exception:
-                  result = {
-                      'ok': False,
-                      'error': 'dispatcher_non_json_output',
-                      'returncode': cp.returncode,
-                  }
+                  result = {'ok': False, 'error': 'dispatcher_non_json_output', 'returncode': cp.returncode}
           except Exception:
               result = {'ok': False, 'error': 'workflow_dispatch_exception'}
 
@@ -102,47 +99,45 @@ jobs:
               'duration_ms': result.get('duration_ms'),
               'idempotent_replay': result.get('idempotent_replay'),
               'error': result.get('error'),
+              'control_version': result.get('control_version'),
+              'head': result.get('head'),
+              'changed': result.get('changed'),
+              'state': result.get('state'),
               'run_id': os.environ['GH_RUN_ID'],
               'run_attempt': os.environ['GH_RUN_ATTEMPT'],
           }
+          summary = {k: v for k, v in summary.items() if v is not None}
           checks = result.get('checks') or []
           safe_checks = [
-              {
-                  'name': item.get('name'),
-                  'ok': bool(item.get('ok')),
-                  'returncode': item.get('returncode'),
-                  'duration_ms': item.get('duration_ms'),
-                  'error': item.get('error'),
-              }
-              for item in checks
+              {'name': x.get('name'), 'ok': bool(x.get('ok')), 'returncode': x.get('returncode'), 'duration_ms': x.get('duration_ms'), 'error': x.get('error')}
+              for x in checks
           ]
+          capabilities = result.get('capabilities') or []
           safe_report = {
-              'schema': 'macctl-github-r1-safe-report/v1',
+              'schema': 'macctl-github-r2-safe-report/v1',
               'repository': repo,
               'issue_number': int(issue),
               'summary': summary,
               'checks': safe_checks,
+              'capabilities': capabilities,
           }
-          report_path = os.path.join(os.environ['RUNNER_TEMP'], 'macctl-r1-report.json')
+          report_path = os.path.join(os.environ['RUNNER_TEMP'], 'macctl-r2-report.json')
           with open(report_path, 'w', encoding='utf-8') as f:
               json.dump(safe_report, f, ensure_ascii=False, indent=2, sort_keys=True)
               f.write('\n')
 
           lines = [
-              '## Linux-macctl GitHub R1 执行结果',
-              '',
-              '公开仓库仅回传非敏感摘要；完整执行记录保留在 Hermes 本地账本。',
-              '',
-              '```json',
-              json.dumps(summary, ensure_ascii=False, indent=2),
-              '```',
+              '## Linux-macctl GitHub R2 执行结果', '',
+              '公开仓库仅回传非敏感摘要；完整执行记录保留在 Hermes 本地账本。', '',
+              '```json', json.dumps(summary, ensure_ascii=False, indent=2), '```',
           ]
+          if capabilities:
+              lines += ['', '### 当前可自主调用能力', '', ', '.join(f'`{x}`' for x in capabilities)]
           if safe_checks:
-              lines += ['', '### 巡检明细', '', '| 检查项 | 结果 | 耗时 |', '| --- | --- | ---: |']
+              lines += ['', '### 检查明细', '', '| 检查项 | 结果 | 耗时 |', '| --- | --- | ---: |']
               for item in safe_checks:
                   state = 'PASS' if item.get('ok') else 'FAIL'
-                  ms = item.get('duration_ms')
-                  lines.append(f"| `{item.get('name')}` | {state} | {ms} ms |")
+                  lines.append(f"| `{item.get('name')}` | {state} | {item.get('duration_ms')} ms |")
           api('POST', f'/issues/{issue}/comments', {'body': '\n'.join(lines)})
 
           remove_label('macctl:running')
@@ -157,7 +152,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: macctl-r1-issue-${{ github.event.issue.number }}-run-${{ github.run_id }}
-          path: ${{ runner.temp }}/macctl-r1-report.json
+          name: macctl-r2-issue-${{ github.event.issue.number }}-run-${{ github.run_id }}
+          path: ${{ runner.temp }}/macctl-r2-report.json
           if-no-files-found: ignore
           retention-days: 7
