@@ -1,4 +1,4 @@
-name: macctl-control-r2.1
+name: macctl-control-r3
 
 on:
   issues:
@@ -18,7 +18,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, hermes-macctl-control]
     timeout-minutes: 20
     steps:
-      - name: Dispatch typed R2.1 request
+      - name: Dispatch typed R3 request
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
@@ -27,6 +27,7 @@ jobs:
           GH_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           python3 - <<'PY'
+          import csv
           import json
           import os
           import subprocess
@@ -65,9 +66,10 @@ jobs:
               quoted = urllib.parse.quote(label, safe='')
               api('DELETE', f'/issues/{issue}/labels/{quoted}', ignore_404=True)
 
-          add_labels('macctl:r2', 'macctl:running')
+          add_labels('macctl:r3', 'macctl:running')
           remove_label('macctl:request')
           remove_label('macctl:r1')
+          remove_label('macctl:r2')
           remove_label('macctl:passed')
           remove_label('macctl:failed')
 
@@ -110,6 +112,7 @@ jobs:
               'github_runner_active': result.get('github_runner_active'),
               'scheduled_at_epoch': result.get('scheduled_at_epoch'),
               'completed_at_epoch': result.get('completed_at_epoch'),
+              'local_bundle_id': result.get('local_bundle_id'),
               'run_id': os.environ['GH_RUN_ID'],
               'run_attempt': os.environ['GH_RUN_ATTEMPT'],
           }
@@ -120,22 +123,52 @@ jobs:
               for x in checks
           ]
           capabilities = result.get('capabilities') or []
+          diagnostics = result.get('diagnostics') or {}
+          fleet_summary = result.get('fleet_summary') or diagnostics.get('fleet') or {}
+          actions = result.get('actions') or []
+          last_event = result.get('last_event')
+
           safe_report = {
-              'schema': 'macctl-github-r2.1-safe-report/v1',
+              'schema': 'macctl-github-r3-safe-report/v1',
               'repository': repo,
               'issue_number': int(issue),
               'summary': summary,
               'checks': safe_checks,
               'capabilities': capabilities,
+              'diagnostics': diagnostics,
+              'fleet_summary': fleet_summary,
+              'actions': actions,
+              'last_event': last_event,
           }
-          report_path = os.path.join(os.environ['RUNNER_TEMP'], 'macctl-r2-1-report.json')
+
+          bundle_dir = os.path.join(os.environ['RUNNER_TEMP'], 'macctl-r3-safe-bundle')
+          os.makedirs(bundle_dir, exist_ok=True)
+          report_path = os.path.join(bundle_dir, 'report.json')
           with open(report_path, 'w', encoding='utf-8') as f:
               json.dump(safe_report, f, ensure_ascii=False, indent=2, sort_keys=True)
               f.write('\n')
 
+          md = ['# Linux-macctl GitHub R3 安全诊断摘要', '', '## 任务摘要', '', '```json', json.dumps(summary, ensure_ascii=False, indent=2), '```']
+          if safe_checks:
+              md += ['', '## 检查明细', '', '| 检查项 | 结果 | 耗时 |', '| --- | --- | ---: |']
+              for item in safe_checks:
+                  md.append(f"| `{item.get('name')}` | {'PASS' if item.get('ok') else 'FAIL'} | {item.get('duration_ms')} ms |")
+          if fleet_summary:
+              md += ['', '## Fleet 汇总', '', '```json', json.dumps(fleet_summary, ensure_ascii=False, indent=2), '```']
+          if diagnostics:
+              md += ['', '## 安全诊断指标', '', '```json', json.dumps(diagnostics, ensure_ascii=False, indent=2), '```']
+          with open(os.path.join(bundle_dir, 'summary.md'), 'w', encoding='utf-8') as f:
+              f.write('\n'.join(md) + '\n')
+
+          with open(os.path.join(bundle_dir, 'checks.csv'), 'w', encoding='utf-8', newline='') as f:
+              w = csv.DictWriter(f, fieldnames=['name', 'ok', 'returncode', 'duration_ms', 'error'])
+              w.writeheader()
+              for item in safe_checks:
+                  w.writerow(item)
+
           lines = [
-              '## Linux-macctl GitHub R2.1 执行结果', '',
-              '公开仓库仅回传非敏感摘要；完整执行记录保留在 Hermes 本地账本。', '',
+              '## Linux-macctl GitHub R3 执行结果', '',
+              '公开仓库仅回传非敏感摘要；完整原始诊断只保留在 Hermes 本地。', '',
               '```json', json.dumps(summary, ensure_ascii=False, indent=2), '```',
           ]
           if capabilities:
@@ -143,8 +176,9 @@ jobs:
           if safe_checks:
               lines += ['', '### 检查明细', '', '| 检查项 | 结果 | 耗时 |', '| --- | --- | ---: |']
               for item in safe_checks:
-                  state = 'PASS' if item.get('ok') else 'FAIL'
-                  lines.append(f"| `{item.get('name')}` | {state} | {item.get('duration_ms')} ms |")
+                  lines.append(f"| `{item.get('name')}` | {'PASS' if item.get('ok') else 'FAIL'} | {item.get('duration_ms')} ms |")
+          if fleet_summary:
+              lines += ['', '### Fleet 汇总', '', '```json', json.dumps(fleet_summary, ensure_ascii=False, indent=2), '```']
           api('POST', f'/issues/{issue}/comments', {'body': '\n'.join(lines)})
 
           remove_label('macctl:running')
@@ -156,11 +190,11 @@ jobs:
               sys.exit(1)
           PY
 
-      - name: Upload safe report artifact
+      - name: Upload R3 safe diagnostic bundle
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: macctl-r2-1-issue-${{ github.event.issue.number }}-run-${{ github.run_id }}
-          path: ${{ runner.temp }}/macctl-r2-1-report.json
+          name: macctl-r3-issue-${{ github.event.issue.number }}-run-${{ github.run_id }}
+          path: ${{ runner.temp }}/macctl-r3-safe-bundle
           if-no-files-found: ignore
           retention-days: 7
