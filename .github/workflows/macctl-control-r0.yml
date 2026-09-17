@@ -23,6 +23,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
           GH_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_RUN_ID: ${{ github.run_id }}
+          GH_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           python3 - <<'PY'
           import json
@@ -30,6 +32,7 @@ jobs:
           import subprocess
           import sys
           import urllib.error
+          import urllib.parse
           import urllib.request
 
           token = os.environ['GH_TOKEN']
@@ -62,9 +65,6 @@ jobs:
               quoted = urllib.parse.quote(label, safe='')
               api('DELETE', f'/issues/{issue}/labels/{quoted}', ignore_404=True)
 
-          import urllib.parse
-
-          # Mark request as consumed/running before executing anything.
           add_labels('macctl:r1', 'macctl:running')
           remove_label('macctl:request')
           remove_label('macctl:passed')
@@ -102,7 +102,31 @@ jobs:
               'duration_ms': result.get('duration_ms'),
               'idempotent_replay': result.get('idempotent_replay'),
               'error': result.get('error'),
+              'run_id': os.environ['GH_RUN_ID'],
+              'run_attempt': os.environ['GH_RUN_ATTEMPT'],
           }
+          checks = result.get('checks') or []
+          safe_checks = [
+              {
+                  'name': item.get('name'),
+                  'ok': bool(item.get('ok')),
+                  'returncode': item.get('returncode'),
+                  'duration_ms': item.get('duration_ms'),
+                  'error': item.get('error'),
+              }
+              for item in checks
+          ]
+          safe_report = {
+              'schema': 'macctl-github-r1-safe-report/v1',
+              'repository': repo,
+              'issue_number': int(issue),
+              'summary': summary,
+              'checks': safe_checks,
+          }
+          report_path = os.path.join(os.environ['RUNNER_TEMP'], 'macctl-r1-report.json')
+          with open(report_path, 'w', encoding='utf-8') as f:
+              json.dump(safe_report, f, ensure_ascii=False, indent=2, sort_keys=True)
+              f.write('\n')
 
           lines = [
               '## Linux-macctl GitHub R1 执行结果',
@@ -113,15 +137,13 @@ jobs:
               json.dumps(summary, ensure_ascii=False, indent=2),
               '```',
           ]
-          checks = result.get('checks') or []
-          if checks:
+          if safe_checks:
               lines += ['', '### 巡检明细', '', '| 检查项 | 结果 | 耗时 |', '| --- | --- | ---: |']
-              for item in checks:
+              for item in safe_checks:
                   state = 'PASS' if item.get('ok') else 'FAIL'
                   ms = item.get('duration_ms')
                   lines.append(f"| `{item.get('name')}` | {state} | {ms} ms |")
-          comment = '\n'.join(lines)
-          api('POST', f'/issues/{issue}/comments', {'body': comment})
+          api('POST', f'/issues/{issue}/comments', {'body': '\n'.join(lines)})
 
           remove_label('macctl:running')
           if result.get('ok', False):
@@ -130,3 +152,12 @@ jobs:
               add_labels('macctl:failed')
               sys.exit(1)
           PY
+
+      - name: Upload safe report artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: macctl-r1-issue-${{ github.event.issue.number }}-run-${{ github.run_id }}
+          path: ${{ runner.temp }}/macctl-r1-report.json
+          if-no-files-found: ignore
+          retention-days: 7
