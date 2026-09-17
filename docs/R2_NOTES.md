@@ -1,1 +1,0 @@
-R2 ordinary-chat validation will exercise capability discovery, maintenance validation, backup creation, idempotent replay, and safe artifact retrieval.
