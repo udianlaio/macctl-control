@@ -1,1 +1,0 @@
-R2 scope: autonomous typed low/medium-risk maintenance, durable execution, local idempotency, safe public summaries, and artifact retention. High-impact actions remain fresh-authorization gated.
