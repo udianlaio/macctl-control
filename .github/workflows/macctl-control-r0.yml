@@ -1,0 +1,100 @@
+name: macctl-control-r0
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  dispatch:
+    if: >-
+      github.event.label.name == 'macctl:request' &&
+      github.actor == 'udianlaio' &&
+      github.actor_id == '73857148'
+    runs-on: [self-hosted, linux, x64, hermes-macctl-control]
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch strict read-only request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          import urllib.request
+
+          event_path = os.environ['GITHUB_EVENT_PATH']
+          with open(event_path, 'r', encoding='utf-8') as f:
+              event = json.load(f)
+          body = event.get('issue', {}).get('body') or ''
+
+          try:
+              cp = subprocess.run(
+                  ['sudo', '-n', '/usr/local/libexec/macctl-github-dispatch'],
+                  input=body,
+                  text=True,
+                  capture_output=True,
+                  timeout=240,
+              )
+              raw = (cp.stdout or '').strip()
+              try:
+                  result = json.loads(raw)
+              except Exception:
+                  result = {
+                      'ok': False,
+                      'error': 'dispatcher_non_json_output',
+                      'returncode': cp.returncode,
+                      'stdout': raw[:12000],
+                      'stderr': (cp.stderr or '')[:12000],
+                  }
+          except Exception as exc:
+              cp = None
+              result = {'ok': False, 'error': 'workflow_dispatch_exception', 'detail': str(exc)}
+
+          summary = {
+              'ok': result.get('ok', False),
+              'request_id': result.get('request_id'),
+              'operation': result.get('operation'),
+              'returncode': result.get('returncode'),
+              'duration_ms': result.get('duration_ms'),
+              'idempotent_replay': result.get('idempotent_replay'),
+              'error': result.get('error'),
+          }
+          pretty = json.dumps(result, ensure_ascii=False, indent=2)
+          if len(pretty) > 52000:
+              pretty = pretty[:52000] + '\n...[comment truncated]'
+          comment = (
+              '## Linux-macctl GitHub R0 执行结果\n\n'
+              + '```json\n' + json.dumps(summary, ensure_ascii=False, indent=2) + '\n```\n\n'
+              + '<details><summary>完整结果</summary>\n\n```json\n' + pretty + '\n```\n</details>'
+          )
+
+          repo = os.environ['GH_REPOSITORY']
+          issue = os.environ['GH_ISSUE_NUMBER']
+          url = f'https://api.github.com/repos/{repo}/issues/{issue}/comments'
+          payload = json.dumps({'body': comment}, ensure_ascii=False).encode('utf-8')
+          req = urllib.request.Request(
+              url,
+              data=payload,
+              method='POST',
+              headers={
+                  'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'Content-Type': 'application/json',
+              },
+          )
+          with urllib.request.urlopen(req, timeout=30) as resp:
+              if resp.status not in (200, 201):
+                  raise RuntimeError(f'comment failed: HTTP {resp.status}')
+
+          if not result.get('ok', False):
+              sys.exit(1)
+          PY
